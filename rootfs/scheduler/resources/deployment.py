@@ -105,6 +105,42 @@ class Deployment(Resource):
         manifest['spec']['template'] = self.pod.manifest(namespace, name, image, **kwargs)
 
         return manifest
+ 
+    def ingress(self, namespace, name, image, entrypoint, command, **kwargs):
+
+        labels = {
+            'app': namespace,
+            'type': kwargs.get('app_type'),
+            'heritage': 'deis',
+        }
+        ingress_rules = {
+            'host': name + 'waziup.io',
+            'http': {
+                'paths': [{
+                     'path': '/',
+                     'backend': {
+                           'serviceName': name,
+                           'servicePort': entrypoint
+                      }
+                }]
+            }
+        }
+        ingress = {
+            'kind': 'Ingress',
+            'apiVersion': 'extensions/v1beta1',
+            'metadata': {
+                'name': name,
+                'labels': labels,
+                'annotations': {
+                    'kubernetes.io/change-cause': kwargs.get('release_summary', '')
+                }
+            },
+            'spec': {
+                'rules': [ingress_rules]
+            }
+        }
+
+        return ingress
 
     def create(self, namespace, name, image, entrypoint, command, **kwargs):
         manifest = self.manifest(namespace, name, image,
@@ -121,6 +157,17 @@ class Deployment(Resource):
 
         self.wait_until_updated(namespace, name)
         self.wait_until_ready(namespace, name, **kwargs)
+
+        ingress = self.ingress(namespace, name, image ,entrypoint, command, **kwargs)
+
+        url = self.api("/namespaces/{}/ingress", namespace)
+        response2 = self.http_post(url, json=ingress)
+        if self.unhealthy(response.status_code):
+            self.log(namespace, 'template: {}'.format(json.dumps(manifest, indent=4)), 'DEBUG')
+            raise KubeHTTPException(
+                response,
+                'create Ingress "{}" in Namespace "{}"', name, ingress
+            )
 
         return response
 
